@@ -1,0 +1,15 @@
+{
+  "kind": "marinara.personal-extension",
+  "version": 1,
+  "config": {
+    "name": "English Study Simple",
+    "version": "2.0.0",
+    "description": "Marinara Engine 2.4.0에서 선택한 영어의 번역·문법·뉘앙스·유사 표현·난이도를 분석하고 단어장과 최근 문장 기록을 관리합니다.",
+    "runtime": "client",
+    "enabled": false,
+    "capabilities": [
+      "full_page_access"
+    ],
+    "jsPath": "extension.js"
+  }
+}
