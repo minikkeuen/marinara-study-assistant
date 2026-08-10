@@ -59,6 +59,7 @@
   const ROOT = 'mari-english-study';
   const TOGGLE = 'mari-english-study-toggle';
   const POPUP = 'mari-english-study-popup';
+  const SELECTION_ACTION = 'mari-english-study-simple-selection-action';
   const TOGGLE_POS_KEY = 'mari-english-study-toggle-pos';
   const LONG_PRESS_MS = 550;
   if (document.getElementById(ROOT) || document.getElementById(TOGGLE)) return;
@@ -93,7 +94,16 @@
   let pressStart = null;
   let pendingSelection = null;
   let selectionTimer = null;
+  let selectionReconcileTimer = null;
   let vocabularyFilter = 'all';
+  let vocabularySelectionMode = false;
+  const selectedVocabularyIds = new Set();
+  let activeMenuCardId = '';
+  let activePopupEditId = '';
+  let popupEditBaseline = '';
+  let popupReturnToRoot = false;
+  let storageReady = false;
+  let storageLoadPromise = null;
 
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({
     '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
@@ -158,7 +168,14 @@
 #${TOGGLE}{position:fixed;right:18px;bottom:88px;z-index:9996;display:grid;width:44px;height:44px;place-items:center;border:1px solid var(--border,#444);border-radius:9999px;background:var(--card,var(--background,#171717));color:var(--card-foreground,var(--foreground,#eee));box-shadow:0 4px 14px #0005;cursor:grab;touch-action:none;user-select:none;font:inherit;font-size:20px}
 #${TOGGLE}:active{cursor:grabbing}
 #${TOGGLE}[data-dragging="true"]{cursor:grabbing;opacity:.85}
-#${ROOT}[hidden],#${POPUP}[hidden]{display:none}
+#${ROOT}[hidden],#${POPUP}[hidden],#${SELECTION_ACTION}[hidden]{display:none}
+#${SELECTION_ACTION}{position:fixed;z-index:2147483000;display:flex;align-items:center;justify-content:center;min-width:70px;min-height:44px;padding:9px 16px;border:0;border-radius:999px;background:var(--primary,#7c9cff);color:var(--primary-foreground,#101010);box-shadow:0 4px 14px #0005;cursor:pointer;touch-action:manipulation;user-select:none;font:700 13px/1 system-ui,sans-serif}
+#${SELECTION_ACTION}:hover{opacity:.86}
+#${SELECTION_ACTION}:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+#${SELECTION_ACTION}[data-combined="true"]{border-radius:0 999px 999px 0;box-shadow:inset 1px 0 color-mix(in srgb,currentColor 28%,transparent),0 4px 14px #0005}
+[data-mes-selection-partner="true"]{min-height:44px!important;border-radius:0!important}
+[data-mes-selection-partner-position="first"]{border-radius:999px 0 0 999px!important}
+[data-mes-selection-partner-position="middle"]{box-shadow:inset 1px 0 color-mix(in srgb,currentColor 28%,transparent)!important}
 #${ROOT}{position:fixed;right:16px;bottom:140px;z-index:9998;width:min(340px,calc(100vw - 24px));max-height:72vh;overflow:auto;border:1px solid var(--border,#444);border-radius:14px;background:var(--card,var(--background,#171717));color:var(--card-foreground,var(--foreground,#eee));box-shadow:0 14px 42px #0008;font:12px/1.45 system-ui,sans-serif}
 #${ROOT} * ,#${POPUP} *{box-sizing:border-box}
 #${ROOT} .mes-head,#${POPUP} .mes-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:38px;padding:4px 8px 4px 10px;border-bottom:1px solid var(--border,#444);font-weight:800;font-size:13px}
@@ -254,34 +271,90 @@
 #${ROOT} .mes-prompt-settings label{display:grid;gap:5px}
 #${ROOT} .mes-prompt-settings textarea{width:100%;min-height:92px;resize:vertical;padding:8px;border:1px solid var(--border,#555);border-radius:8px;background:var(--background,#171717);color:inherit;font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
 
+#${ROOT} .mes-storage-error{margin:8px 8px 0;padding:8px 10px;border:1px solid color-mix(in srgb,#e5484d 48%,var(--border,#444));border-radius:8px;background:color-mix(in srgb,#e5484d 10%,var(--background,#171717));color:#e86a6f;font-size:11px;line-height:1.45}
+#${ROOT} .mes-storage-error[hidden]{display:none}
+#${ROOT} .mes-vocab-count-actions{display:flex;align-items:center;gap:6px;padding-bottom:5px}
+#${ROOT} .mes-vocab-count-actions .mes-vocab-count{padding:0}
+#${ROOT} .mes-vocab-count-actions button{min-height:26px;padding:3px 7px;border:0;background:transparent;opacity:.65}
+#${ROOT} .mes-vocab-bulk{display:grid;gap:6px;padding:8px;border:1px solid color-mix(in srgb,var(--border,#444) 78%,transparent);border-radius:9px;background:color-mix(in srgb,var(--secondary,#292929) 58%,transparent)}
+#${ROOT} .mes-vocab-bulk[hidden]{display:none}
+#${ROOT} .mes-vocab-bulk-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+#${ROOT} .mes-vocab-select-all{display:flex;grid-template:none;align-items:center;gap:6px;font-weight:650}
+#${ROOT} .mes-vocab-select-all input,#${ROOT} .mes-card-select input{width:16px;height:16px;margin:0;accent-color:var(--primary,#7c9cff)}
+#${ROOT} .mes-vocab-selected-count{font-size:11px;opacity:.68}
+#${ROOT} .mes-vocab-bulk-actions{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+#${ROOT} .mes-vocab-bulk-actions button{min-height:34px;padding:6px 7px}
+#${ROOT} .mes-vocab-bulk-actions button:disabled{cursor:not-allowed;opacity:.42}
+#${ROOT} .mes-vocab-bulk-actions [data-bulk-vocab="delete"]{color:#e86a6f}
+#${ROOT} .mes-card[data-selection-mode="true"]{padding-left:36px;cursor:pointer}
+#${ROOT} .mes-card[data-selected="true"]{border-color:color-mix(in srgb,var(--primary,#7c9cff) 68%,var(--border,#444));background:color-mix(in srgb,var(--primary,#7c9cff) 9%,var(--background,#171717))}
+#${ROOT} .mes-card-select{position:absolute;left:10px;top:11px;display:flex;grid-template:none;align-items:center}
+#${ROOT} .mes-card[data-selection-mode="true"] .mes-card-buttons{display:none}
+#${ROOT} .mes-card-footer{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:6px;min-height:26px}
+#${ROOT} .mes-card-menu{position:fixed;inset:auto;right:auto;bottom:auto;z-index:100;width:150px;height:auto!important;min-height:0;max-height:min(180px,calc(100vh - 16px));margin:0;padding:4px;overflow-y:auto;overflow-x:hidden;border:1px solid var(--border,#555);border-radius:10px;background:var(--card,var(--background,#171717));color:var(--card-foreground,var(--foreground,#eee));box-shadow:0 10px 28px #0007}
+#${ROOT} .mes-card-menu:not(:popover-open){display:none}
+#${ROOT} .mes-card-menu:popover-open{display:grid;grid-auto-rows:max-content;align-content:start;gap:2px}
+#${ROOT} .mes-card-menu button{display:flex;align-items:center;justify-content:flex-start;min-height:34px;width:100%;padding:7px 9px;border:0;background:transparent;text-align:left}
+#${ROOT} .mes-card-menu button:hover,#${ROOT} .mes-card-menu button:focus-visible{background:var(--secondary,#292929)}
+#${ROOT} .mes-card-menu [data-menu-card-action="remove"]{margin-top:3px;border-top:1px solid var(--border,#444);border-radius:0 0 7px 7px;color:#e86a6f}
+#${POPUP} .mes-tabs-actions{display:flex;align-items:center;flex:0 0 auto;margin-right:6px}
+#${POPUP} .mes-tabs-actions button{width:36px;height:40px;padding:0;display:grid;place-items:center;border:0;background:transparent;border-radius:6px;font-size:15px;line-height:1;opacity:.55}
+#${POPUP} .mes-popup-panel{padding:12px}
+#${POPUP} .mes-popup-panel[hidden]{display:none}
+#${POPUP} .mes-popup-panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;padding-bottom:9px;border-bottom:1px solid color-mix(in srgb,var(--border,#444) 72%,transparent)}
+#${POPUP} .mes-popup-panel-head button{min-height:30px;padding:5px 9px;border:0;background:transparent;opacity:.68}
+#${POPUP} .mes-popup-edit-form{display:grid;gap:10px}
+#${POPUP} .mes-popup-edit-form label{display:grid;gap:4px;font-weight:650}
+#${POPUP} .mes-popup-edit-form select,#${POPUP} .mes-popup-edit-form textarea{width:100%;padding:8px;border:1px solid var(--border,#555);border-radius:8px;background:var(--background,#171717);color:inherit;font:inherit;line-height:1.5}
+#${POPUP} .mes-popup-edit-form textarea{min-height:72px;resize:vertical}
+#${POPUP} .mes-popup-edit-form [name="popup-edit-text"]{min-height:88px}
+#${POPUP} .mes-popup-edit-analysis{border-top:1px solid var(--border,#444);padding-top:4px}
+#${POPUP} .mes-popup-edit-analysis summary{min-height:38px;display:flex;align-items:center;cursor:pointer;list-style:none;font-weight:700}
+#${POPUP} .mes-popup-edit-analysis summary::-webkit-details-marker{display:none}
+#${POPUP} .mes-popup-edit-analysis-body{display:grid;gap:10px;padding-top:6px}
+#${POPUP} .mes-popup-edit-error{min-height:17px;color:#e86a6f;font-size:11px}
+#${POPUP} .mes-popup-edit-actions{display:grid;grid-template-columns:1fr 1.4fr;gap:8px;padding-top:4px}
+#${POPUP} .mes-popup-edit-actions button{min-height:40px}
+#${POPUP} .mes-popup-edit-actions [type="submit"]{background:var(--primary,#7c9cff);color:var(--primary-foreground,#101010);font-weight:750}
+#${ROOT}{display:flex;flex-direction:column;overflow:hidden}
+#${ROOT} .mes-root-view{min-height:0;flex:1 1 auto;padding-bottom:14px;max-height:none}
+
 @media (max-width:640px){
-#${ROOT}{left:6px;right:6px;bottom:calc(72px + env(safe-area-inset-bottom));width:auto;max-height:82vh;font-size:11px}
-#${ROOT}:has([data-root-view="vocabulary"]:not([hidden])){left:auto;right:6px;width:min(340px,calc(100vw - 24px));min-width:min(300px,calc(100vw - 24px));max-width:340px}
-#${ROOT} .mes-root-view{max-height:calc(82vh - 39px)}
-#${POPUP}{width:min(360px,calc(100vw - 28px));max-height:min(64vh,500px);font-size:12px}
+#${ROOT},#${ROOT}:has([data-root-view="vocabulary"]:not([hidden])){left:6px;right:6px;top:calc(12px + env(safe-area-inset-top));bottom:auto;width:auto;min-width:0;max-width:none;max-height:74vh;max-height:min(74dvh,calc(100dvh - 36px - env(safe-area-inset-top) - env(safe-area-inset-bottom)));font-size:13px}
+#${ROOT} .mes-root-view{max-height:none;padding:10px 10px max(16px,env(safe-area-inset-bottom))}
+#${POPUP}{width:min(360px,calc(100vw - 28px));max-height:min(58vh,460px);max-height:min(58dvh,460px);font-size:12px}
+#${POPUP}[data-root-linked="true"]{left:6px!important;right:6px!important;top:calc(12px + env(safe-area-inset-top))!important;bottom:auto!important;width:auto;max-width:none}
 #${ROOT} [data-vocab-search]{font-size:12px;padding:7px 8px}
 #${ROOT} [data-root-view="settings"]{font-size:11px}
 #${ROOT} [data-root-view="settings"] select,
 #${ROOT} [data-root-view="settings"] input{font-size:12px;padding:6px}
 #${ROOT} .mes-prompt-settings textarea{font-size:10.5px;line-height:1.42;padding:7px;max-width:100%}
-#${POPUP} .mes-head{min-height:36px}
+#${ROOT} .mes-root-head,#${POPUP} .mes-head{height:44px;min-height:44px;padding:4px 8px}
 #${POPUP} .mes-selected-row{padding:6px 8px 6px 10px}
 #${POPUP} .mes-selected{font-size:13px;line-height:1.4}
 #${POPUP} .mes-selected-actions>button{min-width:34px;min-height:34px}
 #${POPUP} .mes-regenerate{min-width:34px;min-height:34px}
-#${ROOT} .mes-root-head button{width:34px;height:34px}
+#${ROOT} .mes-root-head button,#${POPUP} .mes-popup-head-actions button{width:34px;height:34px;min-width:34px;min-height:34px}
 #${ROOT} .mes-vocab-filters{gap:22px}
 #${ROOT} .mes-vocab-filters button{min-height:38px;padding-bottom:9px;font-size:13px}
 #${ROOT} .mes-vocab-count{padding-bottom:10px;font-size:11px}
-#${ROOT} .mes-list{height:270px;max-height:270px;overflow-y:auto;overflow-x:hidden;align-content:start}
+#${ROOT} .mes-list{height:auto;max-height:none;overflow:visible;align-content:start}
 #${ROOT} .mes-card{padding:9px 10px 3px}
 #${ROOT} .mes-card-buttons{gap:4px;margin-top:2px}
-#${ROOT} .mes-card-buttons button{width:38px;height:38px;min-width:38px;font-size:17px}
+#${ROOT} .mes-card-buttons button{width:44px;height:44px;min-width:44px;font-size:18px}
+#${ROOT} .mes-vocab-bulk-actions button{min-height:44px}
+#${ROOT} .mes-card-menu button{min-height:44px;font-size:14px}
+#${POPUP} .mes-popup-edit-form select,#${POPUP} .mes-popup-edit-form textarea{font-size:16px}
+#${POPUP} .mes-popup-edit-actions button{min-height:48px}
 }
   `);
 
   const toggle = addElement(document.body, 'button', {
     id: TOGGLE, type:'button', title:'English Study', 'aria-label':'English Study', textContent:'📚'
+  });
+  const selectionAction = addElement(document.body, 'button', {
+    id: SELECTION_ACTION, type:'button', hidden:'', title:'선택한 텍스트 분석',
+    'aria-label':'선택한 텍스트 분석', 'data-marinara-selection-action':'english-study-simple', textContent:'분석'
   });
   const root = addElement(document.body, 'section', {
     id: ROOT, hidden:'', role:'dialog', 'aria-label':'English Study 설정'
@@ -299,6 +372,8 @@
       </div>
     </div>
 
+    <div class="mes-storage-error" data-storage-error role="alert" hidden></div>
+
     <div class="mes-root-view" data-root-view="vocabulary">
       <div class="mes-vocab-tools">
         <input type="search" data-vocab-search placeholder="단어·문장·번역 검색">
@@ -309,7 +384,20 @@
             <button type="button" data-vocab-filter="sentence" role="tab">문장</button>
             <button type="button" data-vocab-filter="favorite" role="tab" aria-label="즐겨찾기">★</button>
           </div>
-          <span class="mes-vocab-count" data-count></span>
+          <div class="mes-vocab-count-actions">
+            <span class="mes-vocab-count" data-count></span>
+            <button type="button" data-act="toggle-vocab-selection" aria-pressed="false">선택</button>
+          </div>
+        </div>
+        <div class="mes-vocab-bulk" data-vocab-bulk hidden>
+          <div class="mes-vocab-bulk-head">
+            <label class="mes-vocab-select-all"><input type="checkbox" data-vocab-select-all>현재 목록 전체</label>
+            <span class="mes-vocab-selected-count" data-vocab-selected-count>0개 선택</span>
+          </div>
+          <div class="mes-vocab-bulk-actions">
+            <button type="button" data-bulk-vocab="favorite">즐겨찾기</button>
+            <button type="button" data-bulk-vocab="delete">삭제</button>
+          </div>
         </div>
       </div>
       <div class="mes-list" data-list></div>
@@ -378,7 +466,7 @@
           <button data-act="import-data">백업 복원</button>
           <button data-act="clear">단어장 전체 삭제</button>
         </div>
-        <div class="mes-muted">설정, 최근 분석 기록, 단어장을 JSON으로 백업할 수 있습니다.</div>
+        <div class="mes-muted">설정과 단어장을 JSON으로 백업합니다. 최근 분석 기록은 임시 데이터이므로 포함하지 않습니다.</div>
       </div>
       <input type="file" data-import-file accept="application/json,.json" hidden>
     </div>`;
@@ -387,12 +475,13 @@
     <div class="mes-head">
       <span data-title>문장 보기</span>
       <div class="mes-popup-head-actions">
+        <button data-act="back-to-root" title="단어장으로 돌아가기" aria-label="단어장으로 돌아가기" hidden>←</button>
         <button data-act="open-settings" title="설정 열기" aria-label="설정 열기">⚙</button>
         <button data-act="center-popup" title="분석창 중앙 배치" aria-label="분석창 중앙 배치">◎</button>
         <button data-act="close">×</button>
       </div>
     </div>
-    <div class="mes-selected-row">
+    <div class="mes-selected-row" data-analysis-part>
       <div class="mes-selected" data-selected></div>
       <div class="mes-selected-actions">
         <button data-act="copy" title="원문 복사" aria-label="원문 복사">⧉</button>
@@ -402,11 +491,11 @@
         </button>
       </div>
     </div>
-    <div class="mes-history-panel" data-history-panel hidden>
+    <div class="mes-history-panel" data-history-panel data-analysis-part hidden>
       <select data-history aria-label="최근 분석"></select>
       <button data-act="delete-history" title="현재 기록 삭제" aria-label="현재 기록 삭제">삭제</button>
     </div>
-    <div class="mes-tabs-row">
+    <div class="mes-tabs-row" data-analysis-part>
       <div class="mes-tabs">
         <button data-task="combined">AI 해설</button>
         <button data-task="translate">번역</button>
@@ -415,17 +504,59 @@
         <button data-task="similar">유사 표현</button>
         <button data-task="difficulty">난이도</button>
       </div>
-      <button class="mes-regenerate" data-act="regenerate" title="다시 생성" aria-label="다시 생성">↻</button>
+      <div class="mes-tabs-actions">
+        <button data-act="edit-saved-card" title="카드 편집" aria-label="카드 편집">✎</button>
+        <button class="mes-regenerate" data-act="regenerate" title="다시 생성" aria-label="다시 생성">↻</button>
+      </div>
     </div>
-    <div class="mes-result mes-muted" data-result>기능을 선택하세요.</div>
-    <div class="mes-combined" data-combined hidden></div>`;
+    <div class="mes-result mes-muted" data-result data-analysis-part>기능을 선택하세요.</div>
+    <div class="mes-combined" data-combined data-analysis-part hidden></div>
+    <div class="mes-popup-panel" data-popup-card-edit hidden>
+      <div class="mes-popup-panel-head"><b>카드 편집</b><button type="button" data-act="cancel-popup-card-edit">분석으로 돌아가기</button></div>
+      <form class="mes-popup-edit-form" data-popup-card-edit-form>
+        <label>카드 유형
+          <select name="popup-edit-kind"><option value="word">단어</option><option value="sentence">문장</option></select>
+        </label>
+        <label>영어 원문<textarea name="popup-edit-text" required></textarea></label>
+        <label>번역<textarea name="popup-edit-translate"></textarea></label>
+        <details class="mes-popup-edit-analysis">
+          <summary>AI 분석 내용</summary>
+          <div class="mes-popup-edit-analysis-body">
+            <label>문법<textarea name="popup-edit-grammar"></textarea></label>
+            <label>뉘앙스<textarea name="popup-edit-nuance"></textarea></label>
+            <label>유사 표현<textarea name="popup-edit-similar"></textarea></label>
+            <label>난이도<textarea name="popup-edit-difficulty"></textarea></label>
+          </div>
+        </details>
+        <div class="mes-popup-edit-error" data-popup-edit-error role="alert"></div>
+        <div class="mes-popup-edit-actions">
+          <button type="button" data-act="cancel-popup-card-edit">취소</button>
+          <button type="submit">저장</button>
+        </div>
+      </form>
+    </div>`;
+
+  root.insertAdjacentHTML('beforeend', `
+    <div class="mes-card-menu" data-card-menu popover="auto" role="menu" aria-label="카드 더보기">
+      <button type="button" role="menuitem" data-menu-card-action="edit">편집</button>
+      <button type="button" role="menuitem" data-menu-card-action="remove">삭제</button>
+    </div>`);
 
   const clampPosition = (left, top, width, height) => ({
     left: Math.max(6, Math.min(left, window.innerWidth - width - 6)),
     top: Math.max(6, Math.min(top, window.innerHeight - height - 6))
   });
 
+  const linkedPopupPositionKey = () => popupReturnToRoot ? 'panelPosition' : 'popupPosition';
+
+  const syncPopupReturnControl = () => {
+    const button = popup.querySelector('[data-act="back-to-root"]');
+    if (button) button.hidden = !popupReturnToRoot;
+    popup.dataset.rootLinked = popupReturnToRoot ? 'true' : 'false';
+  };
+
   const applyStoredPositions = () => {
+    const compactLayout = window.innerWidth <= 640;
     if (cfg.togglePosition && Number.isFinite(cfg.togglePosition.left) && Number.isFinite(cfg.togglePosition.top)) {
       const pos = clampPosition(cfg.togglePosition.left, cfg.togglePosition.top, toggle.offsetWidth || 44, toggle.offsetHeight || 44);
       toggle.style.left = `${pos.left}px`;
@@ -433,17 +564,27 @@
       toggle.style.right = 'auto';
       toggle.style.bottom = 'auto';
     }
-    if (cfg.panelPosition && Number.isFinite(cfg.panelPosition.left) && Number.isFinite(cfg.panelPosition.top)) {
+    if (compactLayout) {
+      root.style.left = '';
+      root.style.top = '';
+      root.style.right = '';
+      root.style.bottom = '';
+      popup.style.left = '';
+      popup.style.top = '';
+      popup.style.right = '';
+      popup.style.bottom = '';
+    } else if (cfg.panelPosition && Number.isFinite(cfg.panelPosition.left) && Number.isFinite(cfg.panelPosition.top)) {
       const pos = clampPosition(cfg.panelPosition.left, cfg.panelPosition.top, root.offsetWidth || 340, root.offsetHeight || 300);
       root.style.left = `${pos.left}px`;
       root.style.top = `${pos.top}px`;
       root.style.right = 'auto';
       root.style.bottom = 'auto';
     }
-    if (cfg.popupPosition && Number.isFinite(cfg.popupPosition.left) && Number.isFinite(cfg.popupPosition.top)) {
+    const popupPosition = cfg[linkedPopupPositionKey()];
+    if (!compactLayout && popupPosition && Number.isFinite(popupPosition.left) && Number.isFinite(popupPosition.top)) {
       const pos = clampPosition(
-        cfg.popupPosition.left,
-        cfg.popupPosition.top,
+        popupPosition.left,
+        popupPosition.top,
         popup.offsetWidth || Math.min(390, innerWidth - 20),
         popup.offsetHeight || Math.min(560, innerHeight - 20)
       );
@@ -454,13 +595,34 @@
     }
   };
 
-  const saveCfg = async () => storage.patch({ config: cfg }).catch(() => {});
+  const setStorageError = message => {
+    const node = root.querySelector('[data-storage-error]');
+    if (!node) return;
+    node.textContent = String(message || '');
+    node.hidden = !message;
+  };
+
+  const saveCfg = async () => {
+    if (!storageReady) {
+      setStorageError('서버 학습 데이터를 불러오지 못해 변경사항을 저장하지 않았습니다. 연결을 확인한 뒤 화면을 다시 열어 주세요.');
+      return false;
+    }
+    try {
+      await storage.patch({ config: cfg });
+      setStorageError('');
+      return true;
+    } catch (error) {
+      setStorageError(`서버 저장 실패: ${error?.message || error}. 기존 서버 데이터는 변경하지 않았습니다.`);
+      return false;
+    }
+  };
 
   const makeDraggable = (element, handle, configKey, { suppressClick = false } = {}) => {
     let drag = null;
     let moved = false;
 
     handle.addEventListener('pointerdown', event => {
+      if (window.innerWidth <= 640 || isCoarse()) return;
       if (event.button !== undefined && event.button !== 0) return;
       if (event.target.closest?.('button,select,input,textarea,a')) return;
       const rect = element.getBoundingClientRect();
@@ -498,7 +660,8 @@
       drag = null;
       if (!moved) return;
       const rect = element.getBoundingClientRect();
-      cfg[configKey] = { left: Math.round(rect.left), top: Math.round(rect.top) };
+      const resolvedConfigKey = typeof configKey === 'function' ? configKey() : configKey;
+      cfg[resolvedConfigKey] = { left: Math.round(rect.left), top: Math.round(rect.top) };
       await saveCfg();
       if (suppressClick) element.dataset.dragged = '1';
     };
@@ -588,6 +751,65 @@
     });
   };
 
+  const closeCardMenu = () => {
+    const menu = root.querySelector('[data-card-menu]');
+    if (menu?.matches?.(':popover-open')) menu.hidePopover();
+    activeMenuCardId = '';
+  };
+
+  const openCardMenu = (trigger, item) => {
+    const menu = root.querySelector('[data-card-menu]');
+    if (!menu || !trigger || !item) return;
+    if (activeMenuCardId === item.id && menu.matches?.(':popover-open')) {
+      closeCardMenu();
+      return;
+    }
+    closeCardMenu();
+    activeMenuCardId = item.id;
+    const rect = trigger.getBoundingClientRect();
+    const menuWidth = 150;
+    menu.style.visibility = 'hidden';
+    menu.showPopover();
+    const measuredHeight = Math.min(menu.scrollHeight || 92, window.innerHeight - 16);
+    const left = Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8));
+    const top = rect.bottom + measuredHeight <= window.innerHeight - 8
+      ? rect.bottom + 4
+      : Math.max(8, rect.top - measuredHeight - 4);
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(top)}px`;
+    menu.style.right = 'auto';
+    menu.style.bottom = 'auto';
+    menu.style.height = 'auto';
+    menu.style.visibility = '';
+    menu.querySelector('button')?.focus();
+  };
+
+  const renderVocabularySelectionState = visibleItems => {
+    const validIds = new Set(cfg.vocabulary.map(item => item.id));
+    for (const id of selectedVocabularyIds) {
+      if (!validIds.has(id)) selectedVocabularyIds.delete(id);
+    }
+    const selectedItems = cfg.vocabulary.filter(item => selectedVocabularyIds.has(item.id));
+    const visibleIds = visibleItems.map(item => item.id);
+    const selectedVisibleCount = visibleIds.filter(id => selectedVocabularyIds.has(id)).length;
+    const toggleButton = root.querySelector('[data-act="toggle-vocab-selection"]');
+    const bulk = root.querySelector('[data-vocab-bulk]');
+    const selectAll = root.querySelector('[data-vocab-select-all]');
+    toggleButton.textContent = vocabularySelectionMode ? '선택 종료' : '선택';
+    toggleButton.setAttribute('aria-pressed', vocabularySelectionMode ? 'true' : 'false');
+    bulk.hidden = !vocabularySelectionMode;
+    root.querySelector('[data-vocab-selected-count]').textContent = `${selectedItems.length}개 선택`;
+    selectAll.checked = Boolean(visibleIds.length && selectedVisibleCount === visibleIds.length);
+    selectAll.indeterminate = Boolean(selectedVisibleCount && selectedVisibleCount < visibleIds.length);
+    root.querySelectorAll('[data-bulk-vocab]').forEach(button => {
+      button.disabled = selectedItems.length === 0;
+    });
+    const favoriteButton = root.querySelector('[data-bulk-vocab="favorite"]');
+    favoriteButton.textContent = selectedItems.length && selectedItems.every(item => item.favorite)
+      ? '즐겨찾기 해제'
+      : '즐겨찾기';
+  };
+
   const renderList = () => {
     const list = root.querySelector('[data-list]');
     const count = root.querySelector('[data-count]');
@@ -600,21 +822,43 @@
       button.setAttribute('aria-selected', active ? 'true' : 'false');
     });
 
+    renderVocabularySelectionState(items);
+
     list.innerHTML = items.length
       ? items.map(item => {
           const translation = item.results?.translate || '';
-          return `<div class="mes-card" data-vocab-id="${esc(item.id)}">
-            <div class="mes-card-text" data-open-vocab="${esc(item.id)}">${esc(item.text)}</div>
+          const selected = selectedVocabularyIds.has(item.id);
+          const itemAction = vocabularySelectionMode
+            ? `data-toggle-vocab-selection="${esc(item.id)}"`
+            : `data-open-vocab="${esc(item.id)}"`;
+          return `<div class="mes-card" data-vocab-id="${esc(item.id)}" data-selection-mode="${vocabularySelectionMode ? 'true' : 'false'}" data-selected="${selected ? 'true' : 'false'}">
+            ${vocabularySelectionMode ? `<label class="mes-card-select" aria-label="${esc(item.text)} 선택"><input type="checkbox" data-select-vocab="${esc(item.id)}"${selected ? ' checked' : ''}></label>` : ''}
+            <div class="mes-card-text" ${itemAction}>${esc(item.text)}</div>
             ${translation ? `<div class="mes-card-preview">${esc(translation)}</div>` : ''}
-            <div class="mes-card-buttons" aria-label="항목 작업">
-              <button data-open-vocab="${esc(item.id)}" title="분석 열기" aria-label="분석 열기">↗</button>
-              <button data-favorite-vocab="${esc(item.id)}" data-active="${item.favorite ? 'true' : 'false'}" title="${item.favorite ? '즐겨찾기 해제' : '즐겨찾기'}" aria-label="${item.favorite ? '즐겨찾기 해제' : '즐겨찾기'}">${item.favorite ? '★' : '☆'}</button>
-              <button data-copy-vocab="${esc(item.id)}" title="복사" aria-label="복사">⧉</button>
-              <button data-remove-vocab="${esc(item.id)}" title="삭제" aria-label="삭제">×</button>
+            <div class="mes-card-footer">
+              <div class="mes-card-buttons" aria-label="항목 작업">
+                <button data-open-vocab="${esc(item.id)}" title="${item.kind === 'word' ? '단어 보기' : '문장 보기'}" aria-label="${item.kind === 'word' ? '단어 보기' : '문장 보기'}">ⓘ</button>
+                <button data-favorite-vocab="${esc(item.id)}" data-active="${item.favorite ? 'true' : 'false'}" title="${item.favorite ? '즐겨찾기 해제' : '즐겨찾기'}" aria-label="${item.favorite ? '즐겨찾기 해제' : '즐겨찾기'}">${item.favorite ? '★' : '☆'}</button>
+                <button data-copy-vocab="${esc(item.id)}" title="복사" aria-label="복사">⧉</button>
+                <button data-more-vocab="${esc(item.id)}" title="더보기" aria-label="카드 작업 더보기" aria-haspopup="menu">⋯</button>
+              </div>
             </div>
           </div>`;
         }).join('')
       : '<div class="mes-muted">조건에 맞는 저장 항목이 없습니다.</div>';
+  };
+
+  const toggleVocabularySelection = id => {
+    if (!id) return;
+    if (selectedVocabularyIds.has(id)) selectedVocabularyIds.delete(id);
+    else selectedVocabularyIds.add(id);
+    renderList();
+  };
+
+  const completeBulkVocabularyAction = async () => {
+    await saveCfg();
+    renderList();
+    renderSaveState();
   };
 
   const historyLabel = item => {
@@ -624,6 +868,12 @@
 
   const getActiveAnalysis = () =>
     cfg.analysisHistory.find(item => item.id === cfg.activeAnalysisId) || null;
+
+  const getVocabularyForAnalysis = () => {
+    const analysis = getActiveAnalysis();
+    if (!analysis) return null;
+    return cfg.vocabulary.find(item => vocabularyKey(item) === vocabularyKey(analysis)) || null;
+  };
 
   const renderHistorySelect = () => {
     const select = popup.querySelector('[data-history]');
@@ -635,6 +885,7 @@
 
   const renderSaveState = () => {
     const button = popup.querySelector('[data-act="save"]');
+    const editButton = popup.querySelector('[data-act="edit-saved-card"]');
     const item = getActiveAnalysis();
     if (!button) return;
     const saved = Boolean(item && normalizeVocabulary(cfg.vocabulary)
@@ -643,6 +894,60 @@
     button.dataset.saved = saved ? 'true' : 'false';
     button.title = saved ? '단어장에 저장됨' : '단어장에 저장';
     button.setAttribute('aria-label', button.title);
+    if (editButton) editButton.hidden = !saved;
+  };
+
+  const showPopupAnalysisContent = () => {
+    popup.querySelectorAll('[data-analysis-part]').forEach(node => {
+      if (node.matches('[data-history-panel]')) return;
+      node.hidden = false;
+    });
+    popup.querySelector('[data-popup-card-edit]').hidden = true;
+    activePopupEditId = '';
+    popupEditBaseline = '';
+  };
+
+  const popupEditSnapshot = () => {
+    const form = popup.querySelector('[data-popup-card-edit-form]');
+    if (!form) return '';
+    return JSON.stringify({
+      kind: form.elements['popup-edit-kind'].value,
+      text: form.elements['popup-edit-text'].value,
+      translate: form.elements['popup-edit-translate'].value,
+      grammar: form.elements['popup-edit-grammar'].value,
+      nuance: form.elements['popup-edit-nuance'].value,
+      similar: form.elements['popup-edit-similar'].value,
+      difficulty: form.elements['popup-edit-difficulty'].value
+    });
+  };
+
+  const closePopupCardEdit = (force = false) => {
+    const panel = popup.querySelector('[data-popup-card-edit]');
+    if (!panel || panel.hidden) return true;
+    if (!force && popupEditBaseline && popupEditSnapshot() !== popupEditBaseline) {
+      if (!confirm('저장하지 않은 변경사항을 버릴까요?')) return false;
+    }
+    showPopupAnalysisContent();
+    renderAnalysis();
+    return true;
+  };
+
+  const renderPopupCardEdit = item => {
+    if (!item) return;
+    activePopupEditId = item.id;
+    const form = popup.querySelector('[data-popup-card-edit-form]');
+    form.elements['popup-edit-kind'].value = item.kind === 'word' ? 'word' : 'sentence';
+    form.elements['popup-edit-text'].value = item.text || '';
+    form.elements['popup-edit-translate'].value = item.results?.translate || '';
+    form.elements['popup-edit-grammar'].value = item.results?.grammar || '';
+    form.elements['popup-edit-nuance'].value = item.results?.nuance || '';
+    form.elements['popup-edit-similar'].value = item.results?.similar || '';
+    form.elements['popup-edit-difficulty'].value = item.results?.difficulty || '';
+    popup.querySelector('[data-popup-edit-error]').textContent = '';
+    popup.querySelectorAll('[data-analysis-part]').forEach(node => { node.hidden = true; });
+    popup.querySelector('[data-popup-card-edit]').hidden = false;
+    popupEditBaseline = popupEditSnapshot();
+    setTimeout(() => form.elements['popup-edit-text'].focus(), 0);
   };
 
   const renderAnalysis = () => {
@@ -756,18 +1061,19 @@
     popup.style.right = 'auto';
     popup.style.bottom = 'auto';
     if (persist) {
-      cfg.popupPosition = pos;
+      cfg[linkedPopupPositionKey()] = pos;
       await saveCfg();
     }
   };
 
   const placePopup = (x, y, { forceNearSelection = false } = {}) => {
-    if (!forceNearSelection && cfg.popupPosition &&
-        Number.isFinite(cfg.popupPosition.left) &&
-        Number.isFinite(cfg.popupPosition.top)) {
+    const storedPosition = cfg[linkedPopupPositionKey()];
+    if (!forceNearSelection && storedPosition &&
+        Number.isFinite(storedPosition.left) &&
+        Number.isFinite(storedPosition.top)) {
       const width = popup.offsetWidth || Math.min(390, innerWidth - 20);
       const height = popup.offsetHeight || Math.min(560, innerHeight - 20);
-      const pos = clampPosition(cfg.popupPosition.left, cfg.popupPosition.top, width, height);
+      const pos = clampPosition(storedPosition.left, storedPosition.top, width, height);
       popup.style.left = `${pos.left}px`;
       popup.style.top = `${pos.top}px`;
       popup.style.right = 'auto';
@@ -790,13 +1096,150 @@
   const openPopup = (text, kind='sentence', x=innerWidth/2-180, y=innerHeight/3) => {
     text = normalizeSelectionText(text);
     if (!text) return;
+    popupReturnToRoot = false;
+    syncPopupReturnControl();
     createOrActivateAnalysis(text, kind);
+    showPopupAnalysisContent();
     renderAnalysis();
     placePopup(x, y);
     popup.hidden = false;
   };
 
-  const closePopup = () => { popup.hidden = true; };
+  const returnToRootPanel = () => {
+    if (!popupReturnToRoot) return false;
+    if (!closePopupCardEdit(false)) return true;
+    popup.hidden = true;
+    popupReturnToRoot = false;
+    syncPopupReturnControl();
+    root.hidden = false;
+    rootView = 'vocabulary';
+    renderRootView();
+    renderList();
+    applyStoredPositions();
+    return true;
+  };
+
+  const closePopup = () => {
+    if (returnToRootPanel()) return;
+    if (!closePopupCardEdit(false)) return;
+    popup.hidden = true;
+  };
+
+  let selectionPartners = [];
+  const selectionPartnerStyles = new Map();
+
+  const clearSelectionAction = () => {
+    clearTimeout(selectionTimer);
+    clearTimeout(selectionReconcileTimer);
+    pendingSelection = null;
+    selectionAction.hidden = true;
+    selectionAction.dataset.combined = 'false';
+    selectionAction.style.height = '';
+    for (const partner of selectionPartners) {
+      const original = selectionPartnerStyles.get(partner);
+      partner.removeAttribute('data-mes-selection-partner');
+      partner.removeAttribute('data-mes-selection-partner-position');
+      if (original) {
+        partner.style.left = original.left;
+        partner.style.top = original.top;
+      }
+    }
+    selectionPartners = [];
+    selectionPartnerStyles.clear();
+  };
+
+  const visibleSelectionPartners = () => {
+    const candidates = document.querySelectorAll(
+      '.mqc-selection-button, [data-marinara-selection-action]:not([data-marinara-selection-action="english-study-simple"]), [class*="selection-action"], [class*="selection-button"]'
+    );
+    return [...new Set(candidates)].filter(element => {
+      if (element === selectionAction || !element.matches?.('button,[role="button"],a')) return false;
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      const nearSelection = !pendingSelection || (
+        Math.abs((rect.left + rect.width / 2) - pendingSelection.x) < 320 &&
+        Math.abs((rect.top + rect.height / 2) - pendingSelection.y) < 180
+      );
+      return ['fixed', 'absolute'].includes(style.position) &&
+        style.display !== 'none' && style.visibility !== 'hidden' &&
+        rect.width > 0 && rect.width < 320 && rect.height > 0 && rect.height <= 80 && nearSelection;
+    }).sort((a, b) => {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      return Math.abs((ar.left + ar.width / 2) - pendingSelection.x) -
+        Math.abs((br.left + br.width / 2) - pendingSelection.x);
+    });
+  };
+
+  const positionSelectionAction = () => {
+    if (!pendingSelection?.text) {
+      clearSelectionAction();
+      return;
+    }
+    for (const partner of selectionPartners) {
+      partner.removeAttribute('data-mes-selection-partner');
+      partner.removeAttribute('data-mes-selection-partner-position');
+    }
+    selectionPartners = visibleSelectionPartners();
+    selectionAction.hidden = false;
+    const ownWidth = selectionAction.offsetWidth || 70;
+    const ownHeight = selectionAction.offsetHeight || 44;
+
+    if (selectionPartners.length) {
+      selectionPartners.forEach((partner, index) => {
+        if (!selectionPartnerStyles.has(partner)) {
+          selectionPartnerStyles.set(partner, { left: partner.style.left, top: partner.style.top });
+        }
+        partner.setAttribute('data-mes-selection-partner', 'true');
+        partner.setAttribute('data-mes-selection-partner-position', index === 0 ? 'first' : 'middle');
+      });
+      const rects = selectionPartners.map(partner => partner.getBoundingClientRect());
+      const groupHeight = Math.max(ownHeight, ...rects.map(rect => rect.height));
+      const groupWidth = rects.reduce((sum, rect) => sum + rect.width, ownWidth) - selectionPartners.length;
+      const anchor = rects[0];
+      const groupLeft = Math.max(8, Math.min(anchor.left, innerWidth - groupWidth - 8));
+      const groupTop = Math.max(8, Math.min(anchor.top, innerHeight - groupHeight - 8));
+      let cursor = groupLeft;
+      selectionPartners.forEach((partner, index) => {
+        const rect = rects[index];
+        partner.style.left = `${Math.round(cursor)}px`;
+        partner.style.top = `${Math.round(groupTop + (groupHeight - rect.height) / 2)}px`;
+        cursor += rect.width - 1;
+      });
+      selectionAction.dataset.combined = 'true';
+      selectionAction.style.left = `${Math.round(cursor)}px`;
+      selectionAction.style.top = `${Math.round(groupTop)}px`;
+      selectionAction.style.height = `${Math.round(groupHeight)}px`;
+      return;
+    }
+
+    selectionAction.dataset.combined = 'false';
+    selectionAction.style.height = '';
+    selectionAction.style.left = `${Math.max(8, Math.min((pendingSelection.x || innerWidth / 2) - ownWidth / 2, innerWidth - ownWidth - 8))}px`;
+    selectionAction.style.top = `${Math.max(8, Math.min((pendingSelection.y || innerHeight / 3) + 8, innerHeight - ownHeight - 8))}px`;
+  };
+
+  const showSelectionAction = (picked, x, y, delay = 0) => {
+    const text = normalizeSelectionText(picked?.text);
+    if (!text) {
+      clearSelectionAction();
+      return;
+    }
+    pendingSelection = {
+      text,
+      kind: picked?.kind === 'word' ? 'word' : 'sentence',
+      x: Number.isFinite(x) ? x : innerWidth / 2,
+      y: Number.isFinite(y) ? y : innerHeight / 3
+    };
+    clearTimeout(selectionTimer);
+    selectionTimer = setTimeout(() => {
+      positionSelectionAction();
+      selectionReconcileTimer = setTimeout(positionSelectionAction, 260);
+    }, delay);
+  };
+
+  marinara.onCleanup(clearSelectionAction);
+
   function textAtPoint(x, y, scope) {
     let range = null;
     if (document.caretRangeFromPoint) range = document.caretRangeFromPoint(x, y);
@@ -824,7 +1267,7 @@
     const sel = window.getSelection();
     const text = normalizeSelectionText(sel?.toString());
     if (!text || sel.rangeCount < 1) {
-      pendingSelection = null;
+      clearSelectionAction();
       return;
     }
     const range = sel.getRangeAt(0);
@@ -843,43 +1286,43 @@
 
   const handleSelectionEnd = event => {
     if (!cfg.enabled || effectiveMode() !== 'selection') return;
-    if (popup.contains(event.target) || root.contains(event.target) || toggle.contains(event.target)) return;
+    if (popup.contains(event.target) || root.contains(event.target) || toggle.contains(event.target) || selectionAction.contains(event.target)) return;
     clearTimeout(selectionTimer);
     captureSelection();
     selectionTimer = setTimeout(() => {
       captureSelection();
       if (!pendingSelection) return;
-      openPopup(
-        pendingSelection.text,
-        pendingSelection.kind,
+      showSelectionAction(
+        pendingSelection,
         pendingSelection.x || event.clientX || innerWidth / 2,
-        pendingSelection.y || event.clientY || innerHeight / 3
+        pendingSelection.y || event.clientY || innerHeight / 3,
+        260
       );
     }, 30);
   };
 
   const handleClick = event => {
     if (!cfg.enabled || effectiveMode() !== 'click') return;
-    if (popup.contains(event.target) || root.contains(event.target) || toggle.contains(event.target)) return;
+    if (popup.contains(event.target) || root.contains(event.target) || toggle.contains(event.target) || selectionAction.contains(event.target)) return;
     const picked = textAtPoint(event.clientX, event.clientY, cfg.clickScope);
-    if (picked) openPopup(picked.text, picked.kind, event.clientX, event.clientY);
+    if (picked) showSelectionAction(picked, event.clientX, event.clientY);
   };
 
   const handleDoubleClick = event => {
     if (!cfg.enabled || effectiveMode() !== 'doubleclick') return;
-    if (popup.contains(event.target) || root.contains(event.target) || toggle.contains(event.target)) return;
+    if (popup.contains(event.target) || root.contains(event.target) || toggle.contains(event.target) || selectionAction.contains(event.target)) return;
     const picked = textAtPoint(event.clientX, event.clientY, cfg.clickScope);
-    if (picked) openPopup(picked.text, picked.kind, event.clientX, event.clientY);
+    if (picked) showSelectionAction(picked, event.clientX, event.clientY, 260);
   };
 
   const startLongPress = event => {
     if (!cfg.enabled || effectiveMode() !== 'longpress') return;
-    if (popup.contains(event.target) || root.contains(event.target) || toggle.contains(event.target)) return;
+    if (popup.contains(event.target) || root.contains(event.target) || toggle.contains(event.target) || selectionAction.contains(event.target)) return;
     pressStart = { x:event.clientX, y:event.clientY };
     clearTimeout(pressTimer);
     pressTimer = setTimeout(() => {
       const picked = textAtPoint(pressStart.x, pressStart.y, cfg.clickScope === 'word' ? 'word' : 'sentence');
-      if (picked) openPopup(picked.text, picked.kind, pressStart.x, pressStart.y);
+      if (picked) showSelectionAction(picked, pressStart.x, pressStart.y, 260);
     }, LONG_PRESS_MS);
   };
   const moveLongPress = event => {
@@ -899,6 +1342,7 @@
   };
 
   const closeSettingsPanel = () => {
+    closeCardMenu();
     root.hidden = true;
   };
 
@@ -974,9 +1418,39 @@
   on(toggle, 'pointercancel', endToggleDrag);
   on(root.querySelector('[data-act="close"]'), 'click', closeSettingsPanel);
   on(popup.querySelector('[data-act="close"]'), 'click', closePopup);
+  on(popup.querySelector('[data-act="back-to-root"]'), 'click', returnToRootPanel);
+  on(selectionAction, 'pointerdown', event => {
+    event.preventDefault();
+  });
+  on(selectionAction, 'click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    const picked = pendingSelection ? { ...pendingSelection } : null;
+    if (!picked?.text) return;
+    pendingSelection = null;
+    clearSelectionAction();
+    openPopup(picked.text, picked.kind, picked.x, picked.y);
+  });
+  on(document, 'pointerdown', event => {
+    if (selectionAction.contains(event.target)) return;
+    clearSelectionAction();
+  }, true);
+  on(document, 'scroll', clearSelectionAction, true);
+  on(window, 'blur', clearSelectionAction);
+  on(document, 'visibilitychange', () => {
+    if (document.hidden) clearSelectionAction();
+  });
   on(document, 'selectionchange', captureSelection);
   on(document, 'pointerup', handleSelectionEnd);
   on(document, 'keyup', event => {
+    if (event.key === 'Escape' && !selectionAction.hidden) {
+      clearSelectionAction();
+      return;
+    }
+    if (event.key === 'Escape' && !popup.hidden && !popup.querySelector('[data-popup-card-edit]').hidden) {
+      closePopupCardEdit(false);
+      return;
+    }
     if (event.key === 'Shift' || event.key.startsWith('Arrow')) handleSelectionEnd(event);
   });
   on(document, 'click', handleClick);
@@ -1128,7 +1602,6 @@
 
       renderConnections();
       connectionSelect.value = cfg.connectionId;
-      await saveCfg();
 
       setConnectionStatus('');
     } catch (error) {
@@ -1336,7 +1809,7 @@
   };
 
   makeDraggable(root, root.querySelector('.mes-root-head'), 'panelPosition');
-  makeDraggable(popup, popup.querySelector('.mes-head'), 'popupPosition');
+  makeDraggable(popup, popup.querySelector('.mes-head'), linkedPopupPositionKey);
 
   popup.querySelector('[data-act="center-popup"]').addEventListener('click', () => {
     centerPopup(true);
@@ -1374,6 +1847,66 @@
     if (!getActiveAnalysis()) return;
     if (activeTask === 'combined') runAllAI(true);
     else runAI(activeTask, true);
+  });
+
+  popup.querySelector('[data-act="edit-saved-card"]').addEventListener('click', () => {
+    const item = getVocabularyForAnalysis();
+    if (item) renderPopupCardEdit(item);
+  });
+
+  popup.querySelectorAll('[data-act="cancel-popup-card-edit"]').forEach(button => {
+    button.addEventListener('click', () => closePopupCardEdit(false));
+  });
+
+  popup.querySelector('[data-popup-card-edit-form]').addEventListener('submit', async event => {
+    event.preventDefault();
+    const item = cfg.vocabulary.find(entry => entry.id === activePopupEditId);
+    if (!item) {
+      closePopupCardEdit(true);
+      return;
+    }
+    const form = event.currentTarget;
+    const nextText = normalizeSelectionText(form.elements['popup-edit-text'].value);
+    const nextKind = form.elements['popup-edit-kind'].value === 'word' ? 'word' : 'sentence';
+    const error = popup.querySelector('[data-popup-edit-error]');
+    if (!nextText) {
+      error.textContent = '영어 원문을 입력해 주세요.';
+      form.elements['popup-edit-text'].focus();
+      return;
+    }
+    const duplicate = cfg.vocabulary.find(entry =>
+      entry.id !== item.id && analysisKey(entry.text, entry.kind) === analysisKey(nextText, nextKind)
+    );
+    if (duplicate) {
+      error.textContent = '같은 유형과 영어 원문을 가진 카드가 이미 있습니다.';
+      form.elements['popup-edit-text'].focus();
+      return;
+    }
+    error.textContent = '';
+    const linkedAnalysis = cfg.analysisHistory.find(entry => vocabularyKey(entry) === vocabularyKey(item));
+    item.text = nextText;
+    item.kind = nextKind;
+    item.results = {
+      ...(item.results || {}),
+      translate: String(form.elements['popup-edit-translate'].value || '').trim(),
+      grammar: String(form.elements['popup-edit-grammar'].value || '').trim(),
+      nuance: String(form.elements['popup-edit-nuance'].value || '').trim(),
+      similar: String(form.elements['popup-edit-similar'].value || '').trim(),
+      difficulty: String(form.elements['popup-edit-difficulty'].value || '').trim()
+    };
+    item.updatedAt = new Date().toISOString();
+    if (linkedAnalysis) {
+      linkedAnalysis.text = item.text;
+      linkedAnalysis.kind = item.kind;
+      linkedAnalysis.analysisKey = analysisKey(item.text, item.kind);
+      linkedAnalysis.results = { ...(item.results || {}) };
+      linkedAnalysis.updatedAt = item.updatedAt;
+      cfg.activeAnalysisId = linkedAnalysis.id;
+    }
+    await saveCfg();
+    showPopupAnalysisContent();
+    renderList();
+    renderAnalysis();
   });
 
   popup.querySelector('[data-history]').addEventListener('change', event => {
@@ -1426,8 +1959,10 @@
     result.classList.remove('mes-muted');
   });
 
-  const openVocabularyItem = async item => {
+  const openVocabularyItem = async (item, { openEditor = false } = {}) => {
     if (!item) return;
+    popupReturnToRoot = true;
+    syncPopupReturnControl();
     let analysis = cfg.analysisHistory.find(entry =>
       analysisKey(entry.text, entry.kind) === analysisKey(item.text, item.kind)
     );
@@ -1450,10 +1985,13 @@
     cfg.analysisHistory = cfg.analysisHistory.slice(0, 10);
     cfg.activeAnalysisId = analysis.id;
     activeTask = 'combined';
-    await saveCfg();
+    showPopupAnalysisContent();
     renderAnalysis();
+    if (openEditor) renderPopupCardEdit(item);
     popup.hidden = false;
     placePopup(innerWidth / 2 - 180, innerHeight / 3);
+    root.hidden = true;
+    await saveCfg();
   };
 
   root.querySelector('[data-act="toggle-settings"]').addEventListener('click', () => {
@@ -1462,7 +2000,10 @@
   });
 
   popup.querySelector('[data-act="open-settings"]').addEventListener('click', () => {
+    if (!closePopupCardEdit(false)) return;
     popup.hidden = true;
+    popupReturnToRoot = false;
+    syncPopupReturnControl();
     root.hidden = false;
     rootView = 'settings';
     renderRootView();
@@ -1471,9 +2012,41 @@
   });
 
   root.addEventListener('click', async event => {
+    const selectionId = event.target?.getAttribute?.('data-toggle-vocab-selection') ||
+      event.target?.getAttribute?.('data-select-vocab');
+    if (selectionId && vocabularySelectionMode) {
+      toggleVocabularySelection(selectionId);
+      return;
+    }
     const openId = event.target?.getAttribute?.('data-open-vocab');
     if (openId) {
       await openVocabularyItem(cfg.vocabulary.find(item => item.id === openId));
+      return;
+    }
+
+    const moreId = event.target?.getAttribute?.('data-more-vocab');
+    if (moreId) {
+      const item = cfg.vocabulary.find(entry => entry.id === moreId);
+      if (item) openCardMenu(event.target, item);
+      return;
+    }
+
+    const menuAction = event.target?.getAttribute?.('data-menu-card-action');
+    if (menuAction && activeMenuCardId) {
+      const item = cfg.vocabulary.find(entry => entry.id === activeMenuCardId);
+      closeCardMenu();
+      if (!item) return;
+      if (menuAction === 'edit') {
+        await openVocabularyItem(item, { openEditor: true });
+        return;
+      }
+      if (menuAction === 'remove') {
+        if (!confirm(`"${item.text}" 카드를 삭제할까요? 이 작업은 되돌릴 수 없습니다.`)) return;
+        cfg.vocabulary = cfg.vocabulary.filter(entry => entry.id !== item.id);
+        await saveCfg();
+        renderList();
+        renderSaveState();
+      }
       return;
     }
 
@@ -1497,13 +2070,6 @@
       return;
     }
 
-    const removeId = event.target?.getAttribute?.('data-remove-vocab');
-    if (removeId) {
-      cfg.vocabulary = cfg.vocabulary.filter(item => item.id !== removeId);
-      await saveCfg();
-      renderList();
-      renderSaveState();
-    }
   });
 
   root.querySelector('[data-vocab-search]').addEventListener('input', renderList);
@@ -1512,6 +2078,44 @@
     if (!button) return;
     vocabularyFilter = button.dataset.vocabFilter || 'all';
     renderList();
+  });
+
+  root.querySelector('[data-act="toggle-vocab-selection"]').addEventListener('click', () => {
+    vocabularySelectionMode = !vocabularySelectionMode;
+    if (!vocabularySelectionMode) selectedVocabularyIds.clear();
+    closeCardMenu();
+    renderList();
+  });
+
+  root.querySelector('[data-vocab-select-all]').addEventListener('change', event => {
+    const visibleIds = filteredVocabulary().map(item => item.id);
+    if (event.target.checked) visibleIds.forEach(id => selectedVocabularyIds.add(id));
+    else visibleIds.forEach(id => selectedVocabularyIds.delete(id));
+    renderList();
+  });
+
+  root.querySelector('[data-vocab-bulk]').addEventListener('click', async event => {
+    const action = event.target?.getAttribute?.('data-bulk-vocab');
+    if (!action) return;
+    const selectedItems = cfg.vocabulary.filter(item => selectedVocabularyIds.has(item.id));
+    if (!selectedItems.length) return;
+    if (action === 'favorite') {
+      const nextFavorite = !selectedItems.every(item => item.favorite);
+      selectedItems.forEach(item => { item.favorite = nextFavorite; });
+      await completeBulkVocabularyAction();
+      return;
+    }
+    if (action === 'delete') {
+      if (!confirm(`선택한 ${selectedItems.length}개 카드를 삭제할까요? 이 작업은 되돌릴 수 없습니다.`)) return;
+      cfg.vocabulary = cfg.vocabulary.filter(item => !selectedVocabularyIds.has(item.id));
+      selectedVocabularyIds.clear();
+      vocabularySelectionMode = false;
+      await completeBulkVocabularyAction();
+    }
+  });
+
+  root.querySelector('[data-card-menu]').addEventListener('toggle', event => {
+    if (event.newState === 'closed' && !event.currentTarget.matches(':popover-open')) activeMenuCardId = '';
   });
 
   root.querySelector('[data-act="clear"]').addEventListener('click', async () => {
@@ -1531,13 +2135,15 @@
   };
 
   root.querySelector('[data-act="export-data"]').addEventListener('click', () => {
+    const { analysisHistory, activeAnalysisId, ...persistentConfig } = cfg;
     downloadJson(
-      `english-study-backup-${new Date().toISOString().slice(0, 10)}.json`,
+      `english-study-simple-backup-${new Date().toISOString().slice(0, 10)}.json`,
       {
         format: 'marinara-english-study-backup',
-        version: 1,
+        version: 2,
+        extension: 'English Study Simple',
         exportedAt: new Date().toISOString(),
-        config: cfg
+        config: persistentConfig
       }
     );
   });
@@ -1560,33 +2166,13 @@
         ...cfg,
         ...incoming,
         vocabulary: normalizeVocabulary([
-          ...(cfg.vocabulary || []),
-          ...(incoming.vocabulary || [])
+          ...(incoming.vocabulary || []),
+          ...(cfg.vocabulary || [])
         ]),
-        analysisHistory: [
-          ...(incoming.analysisHistory || []),
-          ...(cfg.analysisHistory || [])
-        ]
+        // 분석 기록과 현재 선택은 임시 데이터이므로 백업에서 가져오지 않습니다.
+        analysisHistory: Array.isArray(cfg.analysisHistory) ? cfg.analysisHistory.slice(0, 10) : [],
+        activeAnalysisId: cfg.activeAnalysisId || ''
       };
-
-      const history = [];
-      for (const raw of cfg.analysisHistory) {
-        const text = normalizeSelectionText(raw?.text);
-        if (!text) continue;
-        const key = analysisKey(text, raw?.kind);
-        const existing = history.find(item => item.analysisKey === key);
-        const normalized = {
-          ...raw,
-          id: raw.id || `analysis-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          text,
-          kind: raw.kind || 'sentence',
-          analysisKey: key,
-          results: raw.results && typeof raw.results === 'object' ? raw.results : {}
-        };
-        if (!existing) history.push(normalized);
-        else existing.results = { ...(normalized.results || {}), ...(existing.results || {}) };
-      }
-      cfg.analysisHistory = history.slice(0, 10);
 
       cfg.promptCommon = String(cfg.promptCommon || defaults.promptCommon);
       cfg.prompts = { ...defaults.prompts, ...(cfg.prompts || {}) };
@@ -1607,15 +2193,14 @@
     }
   });
 
-  storage.get().then(r => {
-    const savedState = r?.value && typeof r.value === 'object' ? r.value : r;
-    cfg = { ...defaults, ...(savedState?.config || {}) };
-    cfg.promptCommon = String(cfg.promptCommon || defaults.promptCommon);
-    cfg.prompts = { ...defaults.prompts, ...(cfg.prompts || {}) };
-    if (!Array.isArray(cfg.vocabulary)) cfg.vocabulary = [];
-    cfg.vocabulary = normalizeVocabulary(cfg.vocabulary);
-    if (!Array.isArray(cfg.analysisHistory)) cfg.analysisHistory = [];
-    cfg.analysisHistory = cfg.analysisHistory.map(item => ({
+  const normalizeStoredConfig = savedState => {
+    const next = { ...defaults, ...(savedState?.config || {}) };
+    next.promptCommon = String(next.promptCommon || defaults.promptCommon);
+    next.prompts = { ...defaults.prompts, ...(next.prompts || {}) };
+    if (!Array.isArray(next.vocabulary)) next.vocabulary = [];
+    next.vocabulary = normalizeVocabulary(next.vocabulary);
+    if (!Array.isArray(next.analysisHistory)) next.analysisHistory = [];
+    next.analysisHistory = next.analysisHistory.map(item => ({
       ...item,
       text: normalizeSelectionText(item?.text),
       analysisKey: analysisKey(item?.text, item?.kind),
@@ -1623,7 +2208,7 @@
     })).filter(item => item.text);
 
     const mergedHistory = [];
-    for (const item of cfg.analysisHistory) {
+    for (const item of next.analysisHistory) {
       const existing = mergedHistory.find(entry => entry.analysisKey === item.analysisKey);
       if (!existing) {
         mergedHistory.push(item);
@@ -1632,10 +2217,14 @@
         existing.updatedAt = existing.updatedAt || item.updatedAt;
       }
     }
-    cfg.analysisHistory = mergedHistory.slice(0, 10);
-    if (!cfg.analysisHistory.some(item => item.id === cfg.activeAnalysisId)) {
-      cfg.activeAnalysisId = cfg.analysisHistory[0]?.id || '';
+    next.analysisHistory = mergedHistory.slice(0, 10);
+    if (!next.analysisHistory.some(item => item.id === next.activeAnalysisId)) {
+      next.activeAnalysisId = next.analysisHistory[0]?.id || '';
     }
+    return next;
+  };
+
+  const renderStoredConfig = () => {
     root.querySelector('[name="mode"]').value = cfg.mode;
     root.querySelector('[name="clickScope"]').value = cfg.clickScope;
     fillPromptEditors();
@@ -1645,18 +2234,43 @@
     renderAnalysis();
     applyStoredPositions();
     applyTogglePosition();
-    loadConnections();
-  }).catch(() => {
-    renderList();
-    renderRootView();
-    renderConnections();
-    renderAnalysis();
-    applyStoredPositions();
-    applyTogglePosition();
-    loadConnections();
+  };
+
+  const refreshStoredConfig = ({ reloadConnections = false } = {}) => {
+    if (storageLoadPromise) return storageLoadPromise;
+    storageLoadPromise = (async () => {
+      storageReady = false;
+      try {
+        const response = await storage.get();
+        const savedState = response?.value && typeof response.value === 'object' ? response.value : response;
+        cfg = normalizeStoredConfig(savedState || {});
+        storageReady = true;
+        setStorageError('');
+        renderStoredConfig();
+        if (reloadConnections) await loadConnections();
+        return true;
+      } catch (error) {
+        storageReady = false;
+        setStorageError(`서버 학습 데이터 불러오기 실패: ${error?.message || error}. 빈 데이터로 덮어쓰지 않았습니다.`);
+        renderStoredConfig();
+        if (reloadConnections) await loadConnections();
+        return false;
+      } finally {
+        storageLoadPromise = null;
+      }
+    })();
+    return storageLoadPromise;
+  };
+
+  refreshStoredConfig({ reloadConnections: true });
+
+  on(window, 'focus', () => refreshStoredConfig());
+  on(document, 'visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshStoredConfig();
   });
 
   on(window, 'resize', () => {
+    clearSelectionAction();
     applyTogglePosition();
     applyStoredPositions();
     if (!popup.hidden && !isCoarse()) {
@@ -1664,7 +2278,7 @@
       const pos = clampPosition(rect.left, rect.top, rect.width, rect.height);
       popup.style.left = `${pos.left}px`;
       popup.style.top = `${pos.top}px`;
-      cfg.popupPosition = pos;
+      cfg[linkedPopupPositionKey()] = pos;
       saveCfg();
     }
   });
