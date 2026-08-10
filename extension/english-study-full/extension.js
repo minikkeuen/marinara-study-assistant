@@ -3199,7 +3199,7 @@
     result.classList.remove('mes-muted');
   });
 
-  const openVocabularyItem = async (item, { returnToRootView = '' } = {}) => {
+  const openVocabularyItem = async (item, { returnToRootView = '', openEditor = false } = {}) => {
     if (!item) return;
     popupReturnRootView = ['vocabulary', 'review', 'statistics'].includes(returnToRootView)
       ? returnToRootView
@@ -3230,10 +3230,12 @@
     activePopupEditId = '';
     popupEditBaseline = '';
     showPopupAnalysisContent();
-    await saveCfg();
     renderAnalysis();
+    if (openEditor) renderPopupCardEdit(item);
     popup.hidden = false;
     placePopup(innerWidth / 2 - 180, innerHeight / 3);
+    if (popupReturnRootView) root.hidden = true;
+    await saveCfg();
   };
 
   let previousRootView = 'vocabulary';
@@ -3278,16 +3280,13 @@
   root.querySelector('[data-act="review-detail"]').addEventListener('click', async () => {
     const item = currentReviewItem();
     if (item) {
-      root.hidden = true;
       await openVocabularyItem(item, { returnToRootView: 'review' });
     }
   });
   root.querySelector('[data-act="review-edit"]').addEventListener('click', async () => {
     const item = currentReviewItem();
     if (item) {
-      root.hidden = true;
-      await openVocabularyItem(item, { returnToRootView: 'review' });
-      renderPopupCardEdit(item);
+      await openVocabularyItem(item, { returnToRootView: 'review', openEditor: true });
     }
   });
   root.querySelector('[data-act="review-suspend"]').addEventListener('click', async () => {
@@ -3371,7 +3370,6 @@
       const item = cfg.vocabulary.find(entry => entry.id === detailId);
       if (item) {
         closeCardMenu();
-        root.hidden = true;
         await openVocabularyItem(item, { returnToRootView: 'vocabulary' });
       }
       return;
@@ -3423,9 +3421,7 @@
       closeCardMenu();
       if (!item) return;
       if (menuAction === 'edit') {
-        root.hidden = true;
-        await openVocabularyItem(item, { returnToRootView: 'vocabulary' });
-        renderPopupCardEdit(item);
+        await openVocabularyItem(item, { returnToRootView: 'vocabulary', openEditor: true });
         return;
       }
       if (menuAction === 'reset') {
