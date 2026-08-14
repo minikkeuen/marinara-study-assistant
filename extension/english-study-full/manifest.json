@@ -3,7 +3,7 @@
   "version": 1,
   "config": {
     "name": "English Study",
-    "version": "2.0.0",
+    "version": "2.0.7",
     "description": "Marinara Engine 2.4.0에서 영어 분석, 단어장, 단계형 학습·재학습, Anki 스타일 복습, 통계와 데이터 이전을 지원합니다.",
     "runtime": "client",
     "enabled": false,

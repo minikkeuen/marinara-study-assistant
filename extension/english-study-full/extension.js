@@ -73,10 +73,19 @@
 
   const ROOT = 'mari-english-study-v2';
   const TOGGLE = 'mari-english-study-v2-toggle';
+  const TOPBAR_ROOT = 'mari-english-study-v2-topbar-root';
   const POPUP = 'mari-english-study-v2-popup';
   const SELECTION_ACTION = 'mari-english-study-v2-selection-action';
   const TOGGLE_POS_KEY = 'mari-english-study-v2-toggle-pos';
   const LONG_PRESS_MS = 550;
+  const SELECTION_CHANGE_DELAY_MS = 180;
+  const POINTER_SELECTION_DELAY_MS = 80;
+  const TOUCH_SELECTION_DELAY_MS = 220;
+  const STUDY_CONTENT_SELECTOR = [
+    '.mari-message-content',
+    '.game-narration-prose',
+    '[data-noodle-post-id] p.whitespace-pre-wrap.text-sm'
+  ].join(', ');
   if (document.getElementById(ROOT) || document.getElementById(TOGGLE)) return;
 
   const SCHEMA_VERSION = 3;
@@ -93,6 +102,7 @@
     source: 'english-study',
     mode: 'auto',
     clickScope: 'sentence',
+    launcherMode: 'docked',
     mobileAction: 'menu',
     enabled: true,
     connectionId: '',
@@ -184,6 +194,11 @@
     return text;
   };
 
+  const hasNonKoreanText = text => {
+    const withoutKorean = String(text || '').replace(/[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7a3\ud7b0-\ud7ff]/g, '');
+    return /\p{L}/u.test(withoutKorean);
+  };
+
   const analysisKey = (text, kind) =>
     `${kind || 'sentence'}::${normalizeSelectionText(text).toLocaleLowerCase()}`;
 
@@ -199,9 +214,20 @@
   };
 
   addStyle(`
-#${TOGGLE}{position:fixed;right:18px;bottom:88px;z-index:9996;display:grid;width:44px;height:44px;place-items:center;border:1px solid var(--border,#444);border-radius:9999px;background:var(--card,var(--background,#171717));color:var(--card-foreground,var(--foreground,#eee));box-shadow:0 4px 14px #0005;cursor:grab;touch-action:none;user-select:none;font:inherit;font-size:20px}
-#${TOGGLE}:active{cursor:grabbing}
-#${TOGGLE}[data-dragging="true"]{cursor:grabbing;opacity:.85}
+#${TOGGLE}{position:fixed;z-index:9996;display:grid;place-items:center;border:1px solid var(--border,#444);background:var(--card,var(--background,#171717));color:var(--card-foreground,var(--foreground,#eee));box-shadow:none;touch-action:none;user-select:none;font:inherit;font-size:21px;transition:transform .18s cubic-bezier(.22,1,.36,1),opacity .18s ease-out}
+#${TOGGLE}[data-launcher-mode="docked"]{right:0;top:44%;bottom:auto;left:auto;width:48px;height:54px;border-right:0;border-radius:14px 0 0 14px;cursor:ns-resize;transform-origin:right center;transform:translateX(15px) scale(.82);opacity:.72}
+#${TOGGLE}[data-launcher-mode="floating"]{right:18px;bottom:88px;left:auto;top:auto;width:44px;height:44px;border-radius:9999px;cursor:move;transform:none;opacity:1}
+#${TOPBAR_ROOT}{display:flex;flex:0 0 auto;align-items:center}
+#${TOGGLE}[data-launcher-mode="topbar"]{position:relative;width:32px;height:32px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--muted-foreground,var(--foreground,#eee));box-shadow:none;cursor:pointer;transform:none;opacity:1;transition:color .18s ease-out,background-color .18s ease-out,transform .12s ease-out}
+#${TOGGLE}[data-launcher-mode="topbar"]:hover{background:var(--accent,var(--secondary,#292929));color:var(--foreground,#eee)}
+#${TOGGLE}[data-launcher-mode="topbar"]:active{transform:scale(.95)}
+@media (hover:hover){#${TOGGLE}[data-launcher-mode="docked"]:hover{transform:translateX(0) scale(1);opacity:1}}
+#${TOGGLE}[data-launcher-mode="docked"]:focus-visible,#${TOGGLE}[data-launcher-mode="docked"]:active,#${TOGGLE}[data-launcher-mode="docked"][data-dragging="true"]{transform:translateX(0) scale(1);opacity:1}
+#${TOGGLE}[data-launcher-mode="docked"]:active,#${TOGGLE}[data-launcher-mode="docked"][data-dragging="true"]{cursor:ns-resize}
+#${TOGGLE}[data-launcher-mode="floating"]:active,#${TOGGLE}[data-launcher-mode="floating"][data-dragging="true"]{cursor:grabbing}
+#${TOGGLE} .mes-toggle-icon{display:block;overflow:visible;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+#${TOGGLE}:not([data-launcher-mode="topbar"]) .mes-toggle-icon{width:23px;height:23px}
+#${TOGGLE} .mes-toggle-icon *{fill:none;stroke:currentColor;vector-effect:non-scaling-stroke}
 #${ROOT}[hidden],#${POPUP}[hidden],#${SELECTION_ACTION}[hidden]{display:none}
 #${SELECTION_ACTION}{position:fixed;z-index:2147483000;display:flex;align-items:center;justify-content:center;min-width:70px;min-height:44px;padding:9px 16px;border:0;border-radius:999px;background:var(--primary,#7c9cff);color:var(--primary-foreground,#101010);box-shadow:0 4px 14px #0005;cursor:pointer;touch-action:manipulation;user-select:none;font:700 13px/1 system-ui,sans-serif}
 #${SELECTION_ACTION}:hover{opacity:.86}
@@ -380,7 +406,7 @@
 #${ROOT} .mes-prompt-settings textarea{width:100%;min-height:92px;resize:vertical;padding:8px;border:1px solid var(--border,#555);border-radius:8px;background:var(--background,#171717);color:inherit;font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
 
 @media (max-width:640px){
-#${ROOT}{left:auto;right:6px;top:calc(12px + env(safe-area-inset-top));bottom:auto;width:min(340px,calc(100vw - 24px));min-width:min(300px,calc(100vw - 24px));max-width:340px;max-height:74vh;max-height:min(74dvh,calc(100dvh - 36px - env(safe-area-inset-top) - env(safe-area-inset-bottom)));font-size:11px}
+#${ROOT}{inset:0;width:100vw;min-width:0;max-width:none;height:100dvh;max-height:100dvh;overflow:auto;border:0;border-radius:0;box-shadow:none;font-size:11px}
 #${ROOT} .mes-root-view{max-height:none}
 #${POPUP}{width:min(360px,calc(100vw - 28px));max-height:min(58vh,460px);max-height:min(58dvh,460px);font-size:12px}
 #${POPUP}[data-root-linked="true"]{left:6px!important;right:6px!important;top:calc(12px + env(safe-area-inset-top))!important;bottom:auto!important;width:auto;max-width:none}
@@ -389,7 +415,8 @@
 #${ROOT} [data-root-view="settings"] select,
 #${ROOT} [data-root-view="settings"] input{font-size:12px;padding:6px}
 #${ROOT} .mes-prompt-settings textarea{font-size:10.5px;line-height:1.42;padding:7px;max-width:100%}
-#${ROOT} .mes-root-head,#${POPUP} .mes-head{height:44px;min-height:44px;padding:4px 8px}
+#${ROOT} .mes-root-head{height:auto;min-height:44px;padding:max(4px,env(safe-area-inset-top)) 8px 4px}
+#${POPUP} .mes-head{height:44px;min-height:44px;padding:4px 8px}
 #${ROOT} .mes-root-head button,#${POPUP} .mes-popup-head-actions button{width:34px;height:34px;min-width:34px;min-height:34px}
 #${POPUP} .mes-selected-row{padding:6px 8px 6px 10px}
 #${POPUP} .mes-selected{font-size:13px;line-height:1.4}
@@ -415,7 +442,9 @@
 #${ROOT} .mes-review-shortcuts{display:none}
 }
 #${TOGGLE}{position:fixed}
-#${TOGGLE}[data-has-review="true"]::after{content:attr(data-review-count);position:absolute;top:-5px;right:-5px;display:grid;place-items:center;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#e5484d;color:#fff;border:2px solid var(--background,#171717);font-size:10px;font-weight:800;line-height:1;box-sizing:border-box}
+#${TOGGLE}[data-has-review="true"]::after{content:attr(data-review-count);position:absolute;top:-5px;left:-6px;display:grid;place-items:center;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#e5484d;color:#fff;border:2px solid var(--background,#171717);font-size:10px;font-weight:800;line-height:1;box-sizing:border-box}
+#${TOGGLE}[data-launcher-mode="floating"][data-has-review="true"]::after,#${TOGGLE}[data-launcher-mode="topbar"][data-has-review="true"]::after{left:auto;right:-5px}
+@media (max-width:640px){#${TOGGLE}[data-launcher-mode="docked"]{width:44px;height:50px;transform:translateX(10px) scale(.9);font-size:20px}#${TOGGLE}[data-launcher-mode="docked"]:active,#${TOGGLE}[data-launcher-mode="docked"]:focus-visible,#${TOGGLE}[data-launcher-mode="docked"][data-dragging="true"]{transform:translateX(0) scale(1)}#${TOGGLE}[data-launcher-mode="topbar"]{width:28px;height:28px}}
 #${ROOT} .mes-main-tabs{display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid var(--border,#444)}
 #${ROOT} .mes-main-tabs button{border:0;border-radius:0;background:transparent;padding:9px 8px;color:inherit;opacity:.62;font-weight:700}
 #${ROOT} .mes-main-tabs button[data-active="true"]{opacity:1;border-bottom:2px solid currentColor}
@@ -436,7 +465,7 @@
 #${ROOT} .mes-review-progress-title{font-size:14px;line-height:1.25}
 #${ROOT} .mes-review-kind{display:inline-flex;align-items:center;min-height:20px;padding:2px 7px;border-radius:999px;background:var(--secondary,#292929);font-size:10px;font-weight:750}
 #${ROOT} .mes-review-breakdown{font-size:10px;opacity:.58}
-#${ROOT} .mes-review-card{min-height:190px;padding:18px 14px;border:1px solid var(--border,#444);border-radius:10px;display:grid;align-content:center;gap:12px;text-align:center;animation:mes-review-card-in .16s ease both}
+#${ROOT} .mes-review-card{min-height:190px;padding:16px 12px;border:1px solid var(--border,#444);border-radius:10px;display:grid;align-content:center;gap:10px;text-align:center;animation:mes-review-card-in .16s ease both}
 @keyframes mes-review-card-in{from{opacity:0;transform:translateX(5px)}to{opacity:1;transform:translateX(0)}}
 #${ROOT} .mes-review-front{font-size:20px;font-weight:750;white-space:pre-wrap;word-break:break-word}
 #${ROOT} .mes-review-back{padding-top:12px;border-top:1px solid var(--border,#444);white-space:pre-wrap;word-break:break-word;line-height:1.5}
@@ -470,7 +499,7 @@
 #${ROOT} .mes-card-menu button:hover,#${ROOT} .mes-card-menu button:focus-visible{background:var(--secondary,#292929)}
 #${ROOT} .mes-card-menu [data-menu-card-action="remove"]{margin-top:3px;border-top:1px solid var(--border,#444);border-radius:0 0 7px 7px;color:#e86a6f}
 #${ROOT} .mes-review-card{align-content:stretch;grid-template-rows:minmax(92px,1fr) auto auto;text-align:left}
-#${ROOT} .mes-review-front{display:flex;align-items:center;justify-content:center;text-align:center;padding:18px 4px}
+#${ROOT} .mes-review-front{display:flex;align-items:center;justify-content:center;text-align:center;padding:14px 4px}
 #${ROOT} .mes-review-back{display:grid;gap:10px;text-align:left}
 #${ROOT} .mes-review-back[hidden]{display:none}
 #${ROOT} .mes-review-translation{font-size:14px;line-height:1.55;white-space:pre-wrap;text-align:center}
@@ -500,15 +529,18 @@
 #${ROOT} .mes-edit-actions button{min-height:40px}
 #${ROOT} .mes-edit-actions [type="submit"]{background:var(--primary,#7c9cff);color:var(--primary-foreground,#101010);font-weight:750}
 @media (max-width:640px){
-#${ROOT},#${ROOT}:has([data-root-view="vocabulary"]:not([hidden])){left:6px;right:6px;width:auto;min-width:0;max-width:none;font-size:13px}
-#${ROOT} .mes-root-view{padding:10px 10px max(16px,env(safe-area-inset-bottom))}
+#${ROOT},#${ROOT}:has([data-root-view="vocabulary"]:not([hidden])){inset:0;width:100vw;min-width:0;max-width:none;height:100dvh;max-height:100dvh;font-size:13px}
+#${ROOT} .mes-root-view{align-content:start;padding:10px 10px max(16px,env(safe-area-inset-bottom))}
+#${ROOT} [data-root-view="vocabulary"]{grid-template-rows:auto minmax(0,1fr);align-content:stretch;overflow:hidden}
+#${ROOT} .mes-vocab-tools{grid-auto-rows:max-content;align-content:start}
 #${ROOT} select,#${ROOT} input,#${ROOT} textarea{font-size:16px}
-#${ROOT} .mes-list{height:auto;max-height:none;overflow:visible}
+#${ROOT} .mes-list{min-height:0;height:auto;max-height:none;overflow-y:auto;overflow-x:hidden;align-content:start}
 #${ROOT} .mes-card-buttons button{width:44px;height:44px;min-width:44px;font-size:18px}
-#${ROOT} .mes-review-actions{grid-template-columns:repeat(2,1fr);gap:8px}
-#${ROOT} .mes-review-actions button{min-height:52px;font-size:13px}
+#${ROOT} .mes-review-actions{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
+#${ROOT} .mes-review-actions button{min-width:0;min-height:52px;padding:7px 2px;font-size:11px}
 #${ROOT} .mes-review-actions small{font-size:11px}
-#${ROOT} .mes-review-card{min-height:180px;padding:16px 12px}
+#${ROOT} .mes-review-card{min-height:180px;padding:14px 10px}
+#${ROOT} .mes-review-front{padding:12px 2px}
 #${ROOT} .mes-review-card-tools button{min-height:44px;padding:9px 11px}
 #${ROOT} [data-act="reveal-review"]{min-height:48px;margin-top:6px;margin-bottom:8px}
 #${ROOT} .mes-detail-overlay,#${ROOT} .mes-edit-overlay{padding:6px 0 0}
@@ -522,8 +554,14 @@
   `);
 
   const toggle = addElement(document.body, 'button', {
-    id: TOGGLE, type:'button', title:'English Study', 'aria-label':'English Study', textContent:'📚'
+    id: TOGGLE, type:'button', title:'English Study', 'aria-label':'English Study 열기'
   });
+  toggle.dataset.launcherMode = 'docked';
+  toggle.innerHTML = `<svg class="mes-toggle-icon mari-topbar-accent-icon mari-accent-animated" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M4 5.5c2.8-.8 5.4-.2 8 1.7v12c-2.6-1.9-5.2-2.5-8-1.7z"/>
+    <path d="M20 5.5c-2.8-.8-5.4-.2-8 1.7v12c2.6-1.9 5.2-2.5 8-1.7z"/>
+    <path d="M7 9.2c1.1 0 2.1.3 3 .8M17 9.2c-1.1 0-2.1.3-3 .8"/>
+  </svg>`;
   const selectionAction = addElement(document.body, 'button', {
     id: SELECTION_ACTION, type:'button', hidden:'', title:'선택한 텍스트 분석',
     'aria-label':'선택한 텍스트 분석', 'data-marinara-selection-action':'english-study', textContent:'분석'
@@ -656,6 +694,13 @@
           <option value="doubleclick">두 번 클릭</option>
         </select>
       </label>
+      <label>실행 아이콘 방식
+        <select name="launcherMode">
+          <option value="topbar">상단바</option>
+          <option value="docked">사이드 고정</option>
+          <option value="floating">플로팅</option>
+        </select>
+      </label>
       <label>클릭 분석 범위
         <select name="clickScope">
           <option value="word">단어</option>
@@ -663,7 +708,7 @@
           <option value="paragraph">단락</option>
         </select>
       </label>
-      <div class="mes-muted">어떤 선택 방식을 사용해도 텍스트를 잡은 뒤 분석 버튼을 눌러 분석창을 엽니다.</div>
+      <div class="mes-muted">텍스트를 선택한 뒤 분석 버튼을 눌러 분석창을 엽니다.</div>
       <label>AI 연결
         <select name="connectionId">
           <option value="">연결을 불러오는 중…</option>
@@ -2382,7 +2427,7 @@
 
   const showSelectionAction = (picked, x, y, delay = 0) => {
     const text = normalizeSelectionText(picked?.text);
-    if (!text) {
+    if (!text || !hasNonKoreanText(text)) {
       pendingSelection = null;
       clearSelectionAction();
       return;
@@ -2411,6 +2456,7 @@
     }
     const node = range?.startContainer;
     if (!node || node.nodeType !== Node.TEXT_NODE) return null;
+    if (!node.parentElement?.closest(STUDY_CONTENT_SELECTOR)) return null;
     const text = node.textContent || '';
     const offset = Math.min(range.startOffset || 0, text.length);
     if (scope === 'paragraph') return { text: node.parentElement?.innerText || text, kind:'sentence' };
@@ -2425,19 +2471,37 @@
   }
 
   const captureSelection = () => {
-    if (!cfg.enabled || effectiveMode() !== 'selection') return;
+    const mode = effectiveMode();
+    if (!cfg.enabled || (mode !== 'selection' && !isCoarse())) return;
     const sel = window.getSelection();
     const text = normalizeSelectionText(sel?.toString());
+    if (text && !hasNonKoreanText(text)) {
+      pendingSelection = null;
+      clearSelectionAction();
+      return;
+    }
     if (!text || sel.rangeCount < 1) {
+      // Mobile selection handles can briefly collapse the native range.
+      // Keep the pending action until the next outside press.
+      if (isCoarse() && pendingSelection?.text) return;
       pendingSelection = null;
       clearSelectionAction();
       return;
     }
     const range = sel.getRangeAt(0);
-    const container = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
-      ? range.commonAncestorContainer
-      : range.commonAncestorContainer.parentElement;
-    if (!container || popup.contains(container) || root.contains(container)) return;
+    const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer
+      : range.startContainer.parentElement;
+    const endElement = range.endContainer.nodeType === Node.ELEMENT_NODE
+      ? range.endContainer
+      : range.endContainer.parentElement;
+    const startContent = startElement?.closest?.(STUDY_CONTENT_SELECTOR);
+    const endContent = endElement?.closest?.(STUDY_CONTENT_SELECTOR);
+    if (!startContent || startContent !== endContent) {
+      pendingSelection = null;
+      clearSelectionAction();
+      return;
+    }
     const rect = range.getBoundingClientRect();
     pendingSelection = {
       text,
@@ -2447,8 +2511,9 @@
     };
   };
 
-  const handleSelectionEnd = event => {
-    if (!cfg.enabled || effectiveMode() !== 'selection') return;
+  const scheduleCapturedSelection = (event, delay) => {
+    const mode = effectiveMode();
+    if (!cfg.enabled || (mode !== 'selection' && !isCoarse())) return;
     if (popup.contains(event.target) || root.contains(event.target) || toggle.contains(event.target) || selectionAction.contains(event.target)) return;
     clearTimeout(selectionTimer);
     captureSelection();
@@ -2459,10 +2524,14 @@
         pendingSelection,
         pendingSelection.x || event.clientX || innerWidth / 2,
         pendingSelection.y || event.clientY || innerHeight / 3,
-        260
+        0
       );
-    }, 30);
+    }, delay);
   };
+
+  const handleSelectionChange = event => scheduleCapturedSelection(event, SELECTION_CHANGE_DELAY_MS);
+  const handleSelectionEnd = event => scheduleCapturedSelection(event, POINTER_SELECTION_DELAY_MS);
+  const handleTouchEnd = event => scheduleCapturedSelection(event, TOUCH_SELECTION_DELAY_MS);
 
   const handleClick = event => {
     if (!cfg.enabled || effectiveMode() !== 'click') return;
@@ -2475,7 +2544,7 @@
     if (!cfg.enabled || effectiveMode() !== 'doubleclick') return;
     if (popup.contains(event.target) || root.contains(event.target) || toggle.contains(event.target) || selectionAction.contains(event.target)) return;
     const picked = textAtPoint(event.clientX, event.clientY, cfg.clickScope);
-    if (picked) showSelectionAction(picked, event.clientX, event.clientY, 260);
+    if (picked) showSelectionAction(picked, event.clientX, event.clientY, POINTER_SELECTION_DELAY_MS);
   };
 
   const startLongPress = event => {
@@ -2485,7 +2554,7 @@
     clearTimeout(pressTimer);
     pressTimer = setTimeout(() => {
       const picked = textAtPoint(pressStart.x, pressStart.y, cfg.clickScope === 'word' ? 'word' : 'sentence');
-      if (picked) showSelectionAction(picked, pressStart.x, pressStart.y, 260);
+      if (picked) showSelectionAction(picked, pressStart.x, pressStart.y, TOUCH_SELECTION_DELAY_MS);
     }, LONG_PRESS_MS);
   };
   const moveLongPress = event => {
@@ -2514,18 +2583,92 @@
     root.hidden = true;
   };
 
-  const applyTogglePosition = () => {
+  const resolvedLauncherMode = () => ['topbar', 'floating'].includes(cfg.launcherMode) ? cfg.launcherMode : 'docked';
+
+  const readTogglePositions = () => {
     try {
       const saved = JSON.parse(localStorage.getItem(TOGGLE_POS_KEY) || 'null');
-      if (!saved) return;
-      const maxX = Math.max(0, innerWidth - toggle.offsetWidth);
-      const maxY = Math.max(0, innerHeight - toggle.offsetHeight);
-      toggle.style.left = Math.min(maxX, Math.max(0, (saved.x / 100) * innerWidth)) + 'px';
-      toggle.style.top = Math.min(maxY, Math.max(0, (saved.y / 100) * innerHeight)) + 'px';
+      if (!saved || typeof saved !== 'object') return {};
+      if (saved.docked || saved.floating) return saved;
+      const legacy = {};
+      if (Number.isFinite(Number(saved.y))) legacy.docked = { y: Number(saved.y) };
+      if (Number.isFinite(Number(saved.x)) && Number.isFinite(Number(saved.y))) {
+        legacy.floating = { x: Number(saved.x), y: Number(saved.y) };
+      }
+      return legacy;
+    } catch {
+      return {};
+    }
+  };
+
+  const applyTogglePosition = () => {
+    const mode = resolvedLauncherMode();
+    toggle.style.left = '';
+    toggle.style.top = '';
+    toggle.style.right = '';
+    toggle.style.bottom = '';
+    if (mode === 'topbar') return;
+    const saved = readTogglePositions()[mode];
+    if (!saved) return;
+    const maxX = Math.max(8, innerWidth - toggle.offsetWidth - 8);
+    const maxY = Math.max(8, innerHeight - toggle.offsetHeight - 8);
+    const savedY = Number(saved.y);
+    if (!Number.isFinite(savedY)) return;
+    if (mode === 'floating') {
+      const savedX = Number(saved.x);
+      if (!Number.isFinite(savedX)) return;
+      toggle.style.left = Math.min(maxX, Math.max(8, (savedX / 100) * innerWidth)) + 'px';
+      toggle.style.top = Math.min(maxY, Math.max(8, (savedY / 100) * innerHeight)) + 'px';
       toggle.style.right = 'auto';
       toggle.style.bottom = 'auto';
-    } catch {}
+    } else {
+      toggle.style.left = 'auto';
+      toggle.style.top = Math.min(maxY, Math.max(8, (savedY / 100) * innerHeight)) + 'px';
+      toggle.style.right = '0';
+      toggle.style.bottom = 'auto';
+    }
   };
+
+  const ensureTopbarLauncher = () => {
+    if (resolvedLauncherMode() !== 'topbar') return false;
+    const nav = document.querySelector('[data-component="TopBar"] [data-tour="panel-buttons"]');
+    let holder = document.getElementById(TOPBAR_ROOT);
+    if (!nav) {
+      holder?.remove();
+      return false;
+    }
+    if (holder && holder.parentElement !== nav) {
+      holder.remove();
+      holder = null;
+    }
+    if (!holder) {
+      holder = document.createElement('div');
+      holder.id = TOPBAR_ROOT;
+      nav.prepend(holder);
+    }
+    toggle.classList.add('mari-topbar-action');
+    if (toggle.parentElement !== holder) holder.append(toggle);
+    return true;
+  };
+
+  const ensureBodyLauncher = () => {
+    toggle.classList.remove('mari-topbar-action');
+    if (toggle.parentElement !== document.body) document.body.append(toggle);
+    document.getElementById(TOPBAR_ROOT)?.remove();
+  };
+
+  const applyLauncherMode = () => {
+    cfg.launcherMode = resolvedLauncherMode();
+    toggle.dataset.launcherMode = cfg.launcherMode;
+    if (cfg.launcherMode === 'topbar') ensureTopbarLauncher();
+    else ensureBodyLauncher();
+    applyTogglePosition();
+  };
+
+  setInterval(() => {
+    if (!document.hidden && resolvedLauncherMode() === 'topbar') ensureTopbarLauncher();
+  }, 1600);
+  marinara.onCleanup(() => document.getElementById(TOPBAR_ROOT)?.remove());
 
   let toggleDrag = null;
 
@@ -2545,6 +2688,7 @@
 
   on(toggle, 'pointermove', event => {
     if (!toggleDrag || event.pointerId !== toggleDrag.id) return;
+    if (resolvedLauncherMode() === 'topbar') return;
 
     if (!toggleDrag.moved) {
       if (Math.hypot(event.clientX - toggleDrag.sx, event.clientY - toggleDrag.sy) < 6) return;
@@ -2552,12 +2696,18 @@
       toggle.dataset.dragging = 'true';
     }
 
-    const maxX = Math.max(0, innerWidth - toggle.offsetWidth);
-    const maxY = Math.max(0, innerHeight - toggle.offsetHeight);
-    toggle.style.left = Math.min(maxX, Math.max(0, event.clientX - toggleDrag.ox)) + 'px';
-    toggle.style.top = Math.min(maxY, Math.max(0, event.clientY - toggleDrag.oy)) + 'px';
-    toggle.style.right = 'auto';
+    const mode = resolvedLauncherMode();
+    const maxX = Math.max(8, innerWidth - toggle.offsetWidth - 8);
+    const maxY = Math.max(8, innerHeight - toggle.offsetHeight - 8);
+    toggle.style.top = Math.min(maxY, Math.max(8, event.clientY - toggleDrag.oy)) + 'px';
     toggle.style.bottom = 'auto';
+    if (mode === 'floating') {
+      toggle.style.left = Math.min(maxX, Math.max(8, event.clientX - toggleDrag.ox)) + 'px';
+      toggle.style.right = 'auto';
+    } else {
+      toggle.style.left = 'auto';
+      toggle.style.right = '0';
+    }
   });
 
   const endToggleDrag = event => {
@@ -2573,12 +2723,18 @@
       return;
     }
 
-    const rect = toggle.getBoundingClientRect();
     try {
-      localStorage.setItem(TOGGLE_POS_KEY, JSON.stringify({
-        x: innerWidth ? (rect.left / innerWidth) * 100 : 0,
-        y: innerHeight ? (rect.top / innerHeight) * 100 : 0
-      }));
+      const mode = resolvedLauncherMode();
+      const positions = readTogglePositions();
+      const left = Number.parseFloat(toggle.style.left);
+      const top = Number.parseFloat(toggle.style.top);
+      positions[mode] = mode === 'floating'
+        ? {
+            x: innerWidth && Number.isFinite(left) ? (left / innerWidth) * 100 : 0,
+            y: innerHeight && Number.isFinite(top) ? (top / innerHeight) * 100 : 0
+          }
+        : { y: innerHeight && Number.isFinite(top) ? (top / innerHeight) * 100 : 0 };
+      localStorage.setItem(TOGGLE_POS_KEY, JSON.stringify(positions));
     } catch {}
   };
 
@@ -2608,10 +2764,11 @@
   on(document, 'visibilitychange', () => {
     if (document.hidden) clearSelectionAction();
   });
-  on(document, 'selectionchange', captureSelection);
+  on(document, 'selectionchange', handleSelectionChange);
   on(document, 'pointerup', handleSelectionEnd);
+  on(document, 'touchend', handleTouchEnd);
   on(document, 'keyup', event => {
-    if (event.key === 'Shift' || event.key.startsWith('Arrow')) handleSelectionEnd(event);
+    if (event.key === 'Shift' || event.key.startsWith('Arrow')) scheduleCapturedSelection(event, 0);
   });
   on(document, 'click', handleClick);
   on(document, 'dblclick', handleDoubleClick);
@@ -2621,6 +2778,11 @@
   on(document, 'pointercancel', endLongPress);
 
   root.querySelector('[name="mode"]').addEventListener('change', async e => { cfg.mode = e.target.value; await saveCfg(); });
+  root.querySelector('[name="launcherMode"]').addEventListener('change', async event => {
+    cfg.launcherMode = ['topbar', 'floating'].includes(event.target.value) ? event.target.value : 'docked';
+    applyLauncherMode();
+    await saveCfg();
+  });
   root.querySelector('[name="clickScope"]').addEventListener('change', async e => { cfg.clickScope = e.target.value; await saveCfg(); });
 
   const fillReviewSettings = () => {
@@ -3693,12 +3855,14 @@
       const restoredConnectionId = cfg.connectionId || '';
       await saveCfg();
       root.querySelector('[name="mode"]').value = cfg.mode;
+      root.querySelector('[name="launcherMode"]').value = resolvedLauncherMode();
       root.querySelector('[name="clickScope"]').value = cfg.clickScope;
       renderList();
       renderReview();
       renderConnections();
       renderAnalysis();
       applyStoredPositions();
+      applyLauncherMode();
       await loadConnections(restoredConnectionId);
       connectionSelect.value = cfg.connectionId || '';
     } catch (error) {
@@ -3710,6 +3874,7 @@
 
   const normalizeStoredConfig = savedState => {
     const next = { ...defaults, ...(savedState?.config || {}), schemaVersion: SCHEMA_VERSION };
+    next.launcherMode = ['topbar', 'floating'].includes(next.launcherMode) ? next.launcherMode : 'docked';
     next.reviewSettings = { ...defaults.reviewSettings, ...(next.reviewSettings || {}) };
     next.statistics = { ...defaults.statistics, ...(next.statistics || {}) };
     next.migration = { ...defaults.migration, ...(next.migration || {}) };
@@ -3745,6 +3910,7 @@
 
   const renderStoredConfig = () => {
     root.querySelector('[name="mode"]').value = cfg.mode;
+    root.querySelector('[name="launcherMode"]').value = resolvedLauncherMode();
     root.querySelector('[name="clickScope"]').value = cfg.clickScope;
     fillPromptEditors();
     renderList();
@@ -3753,7 +3919,7 @@
     renderConnections();
     renderAnalysis();
     applyStoredPositions();
-    applyTogglePosition();
+    applyLauncherMode();
   };
 
   const refreshStoredConfig = ({ reloadConnections = false } = {}) => {
